@@ -34,7 +34,10 @@ if(NCNN_PIXEL)
     set_property(TARGET ncnn2table PROPERTY FOLDER "tools/optimization")
 endif()
 
-add_executable(ncnn2int8 ncnn2int8.cpp)
+#srcs in custom layer/
+file(GLOB CUSTOM_LAYER_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/../custom_layers/*.cc)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/..)
+add_executable(ncnn2int8 ncnn2int8.cpp ${CUSTOM_LAYER_SRCS})
 target_link_libraries(ncnn2int8 PRIVATE ncnn)
 
 # add ncnn2int8 tool to a virtual project group

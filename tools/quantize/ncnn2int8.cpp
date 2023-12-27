@@ -31,6 +31,12 @@
 // ncnn private header
 #include "../modelwriter.h"
 
+#include "custom_layers/stack.h"
+#include "custom_layers/tensorasstrided.h"
+#include "custom_layers/simpleupsample.h"
+#include "custom_layers/meta-data.h"
+#include "custom_layers/poolingmodulenoproj.h"
+
 class DataReaderFromEmpty : public ncnn::DataReader
 {
 public:
@@ -121,6 +127,8 @@ class NetQuantize : public ModelWriter
 public:
     NetQuantize();
 
+    void load_blob_layers_from_net(ncnn::Net& net);
+
     std::map<std::string, ncnn::Mat> blob_int8scale_table;
     std::map<std::string, ncnn::Mat> weight_int8scale_table;
 
@@ -131,6 +139,12 @@ public:
 
     int fuse_requantize();
 };
+
+void NetQuantize::load_blob_layers_from_net(ncnn::Net& net )
+{
+    blobs = net.mutable_blobs();
+    layers = net.mutable_layers();
+}
 
 NetQuantize::NetQuantize()
     : ModelWriter()
@@ -530,7 +544,7 @@ int main(int argc, char** argv)
     const char* int8scale_table_path = argv[5];
 
     NetQuantize quantizer;
-
+    //ncnn::Net net;
     // parse the calibration scale table
     if (int8scale_table_path)
     {
@@ -542,6 +556,13 @@ int main(int argc, char** argv)
         }
     }
 
+    //quantizer.load_param(inparam);
+    ncnn::RegisterMetaDataLayer(quantizer);
+    ncnn::RegisterStackLayer(quantizer);
+    ncnn::RegisterTensorAsStridedLayer(quantizer);
+    ncnn::RegisterTensorSimpleUpsampleLayer(quantizer);
+    ncnn::RegisterPoolingModuleNoProjLayer(quantizer);
+
     quantizer.load_param(inparam);
     if (strcmp(inbin, "null") == 0)
     {
@@ -550,7 +571,12 @@ int main(int argc, char** argv)
         quantizer.gen_random_weight = true;
     }
     else
+    {
         quantizer.load_model(inbin);
+        //net.load_model(inbin);
+    }
+    //quantizer.load_blob_layers_from_net(net);
+       
 
     quantizer.quantize_convolution();
     quantizer.quantize_convolutiondepthwise();
