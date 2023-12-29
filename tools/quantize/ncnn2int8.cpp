@@ -529,6 +529,27 @@ int NetQuantize::fuse_requantize()
     return 0;
 }
 
+void load_net(ncnn::Net& net, const char* parampath, const char* modelpath)
+{
+    //register custom layer
+    ncnn::RegisterMetaDataLayer(net);
+    ncnn::RegisterStackLayer(net);
+    ncnn::RegisterTensorAsStridedLayer(net);
+    ncnn::RegisterTensorSimpleUpsampleLayer(net);
+    ncnn::RegisterPoolingModuleNoProjLayer(net);
+
+    if (net.load_param(parampath) != 0)
+    {
+        fprintf(stderr, "load_param failed\n");
+        return;
+    }
+    if (net.load_model(modelpath) != 0)
+    {
+        fprintf(stderr, "load_model failed\n");
+        return;
+    }
+}
+
 int main(int argc, char** argv)
 {
     if (argc != 6)
@@ -585,6 +606,10 @@ int main(int argc, char** argv)
     quantizer.fuse_requantize();
 
     quantizer.save(outparam, outbin);
+
+    ncnn::Net net;
+    //test loader
+    load_net(net, outparam, outbin);
 
     return 0;
 }

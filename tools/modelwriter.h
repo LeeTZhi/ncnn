@@ -111,6 +111,11 @@
 #include "layer/unfold.h"
 #include "layer/yolodetectionoutput.h"
 #include "layer/yolov3detectionoutput.h"
+#include "custom_layers/stack.h"
+#include "custom_layers/tensorasstrided.h"
+#include "custom_layers/simpleupsample.h"
+#include "custom_layers/meta-data.h"
+#include "custom_layers/poolingmodulenoproj.h"
 
 // for gen_random_weight
 #include "../tests/prng.h"
@@ -687,6 +692,24 @@ int ModelWriter::fwrite_weight_data(const ncnn::Mat& data, FILE* bp, float a, fl
     return 0;
 }
 
+static void write_mat_2_pp(FILE* pp, const ncnn::Mat mat, const int index)
+{
+    if (mat.empty())
+    {
+        return;
+    }
+
+    int w = mat.w;
+    const int* ptr = mat.row<int>(0);
+    int idx = -index - 23300;
+    fprintf(pp, " %d=%d", idx, w);
+    //print len
+    for (int i = 0; i < w; i++)
+    {
+        fprintf(pp, ",%d", ptr[i]);
+    }
+}
+
 int ModelWriter::save(const char* parampath, const char* binpath)
 {
     uint64_t mac = 0;
@@ -757,6 +780,10 @@ int ModelWriter::save(const char* parampath, const char* binpath)
 
         // write shape hints
         bool shape_ready = true;
+        if (top_count == 0 )
+        {
+            shape_ready = false;
+        }
         for (size_t j = 0; j < top_count; j++)
         {
             int top_blob_index = layer->tops[j];
@@ -783,26 +810,90 @@ int ModelWriter::save(const char* parampath, const char* binpath)
                 fprintf(pp, ",%d,%d,%d,%d", dims, w, h, c);
             }
         }
+    
+    
+#define write_int_param_value(id, value) \
+    if (op->value != 0) fprintf(pp, " %d=%d", id, op->value);
 
         // custom op
         if (layer->typeindex & ncnn::LayerType::CustomBit)
         {
-            ((CustomLayer*)layer)->write_param(pp);
+            
+            if (layer->type == "SimpleUpsample")
+            {
+                NCNN_LOGE("custom layer : %d %s", (int)i, layer->name.c_str());
+                /*write parameter
+                upsample = pd.get(0, 0);
+                num_channels = pd.get(1, 0);
+                bias_data_size = pd.get(2, 0);*/
+                ncnn::SimpleUpsample* op = (ncnn::SimpleUpsample*)layer;
+                
+                fprintf(pp, " 0=%d", op->upsample);
+                fprintf(pp, " 1=%d", op->num_channels);
+                fprintf(pp, " 2=%d", op->bias_data_size);
+                
+                if (!op->bias.empty())
+                    fwrite_weight_tag_data(op->bias, bp);
+            }
+            else if (layer->type == "SherpaMetaData")
+            {
+                /*write arg0 ~15 int*/
+                ncnn::MetaData* op = (ncnn::MetaData*)layer;
+                write_int_param_value(0, arg0); write_int_param_value(1, arg1); write_int_param_value(2, arg2);
+                write_int_param_value(3, arg3); write_int_param_value(4, arg4); write_int_param_value(5, arg5);
+                write_int_param_value(6, arg6); write_int_param_value(7, arg7); write_int_param_value(8, arg8);
+                write_int_param_value(9, arg9); write_int_param_value(10, arg10); write_int_param_value(11, arg11);
+                write_int_param_value(12, arg12); write_int_param_value(13, arg13); write_int_param_value(14, arg14);
+                write_int_param_value(15, arg15);
 
+                /*16-23, mat*/
+                write_mat_2_pp(pp, op->arg16, 16); write_mat_2_pp(pp, op->arg17, 17); write_mat_2_pp(pp, op->arg18, 18); 
+                write_mat_2_pp(pp, op->arg19, 19); write_mat_2_pp(pp, op->arg20, 20); write_mat_2_pp(pp, op->arg21, 21);
+                write_mat_2_pp(pp, op->arg22, 22); write_mat_2_pp(pp, op->arg23, 23);
+
+                /*24-31, float*/
+                fprintf(pp, " 24=%f", op->arg24); fprintf(pp, " 25=%f", op->arg25); fprintf(pp, " 26=%f", op->arg26);
+                fprintf(pp, " 27=%f", op->arg27); fprintf(pp, " 28=%f", op->arg28); fprintf(pp, " 29=%f", op->arg29);
+                fprintf(pp, " 30=%f", op->arg30); fprintf(pp, " 31=%f", op->arg31);
+            }
+            else if (layer->type == "PoolingModuleNoProj")
+            {
+                ;
+            }
+            else if (layer->type == "Stack")
+            {
+                //axis = pd.get(0, 0);
+                ncnn::Stack* op = (ncnn::Stack*)layer;
+                fprintf(pp, " 0=%d", op->axis);
+            }
+            else if (layer->type == "TensorAsStrided")
+            {
+                /*
+                sizes = pd.get(0, ncnn::Mat());
+                strides = pd.get(1, ncnn::Mat());
+                storage_offset = pd.get(2, 0);
+                */
+                ncnn::TensorAsStrided* op = (ncnn::TensorAsStrided*)layer;
+                write_mat_2_pp(pp, op->sizes, 0);
+                write_mat_2_pp(pp, op->strides, 1);
+                fprintf(pp, " 2=%d", op->storage_offset);
+            }
+            else
+            {
+                ((CustomLayer*)layer)->write_param(pp);
+            }
             fprintf(pp, "\n");
-
             continue;
         }
-
-        ncnn::Layer* layer_default = ncnn::create_layer(layer->typeindex);
-
-        ncnn::ParamDict pd;
-        layer_default->load_param(pd);
 
 #define fprintf_param_value(format, phase)                                  \
     {                                                                       \
         if (op->phase != op_default->phase) fprintf(pp, format, op->phase); \
     }
+        ncnn::Layer* layer_default = ncnn::create_layer(layer->typeindex);
+
+        ncnn::ParamDict pd;
+        layer_default->load_param(pd);
 
         if (layer->type == "BatchNorm")
         {
@@ -889,7 +980,8 @@ int ModelWriter::save(const char* parampath, const char* binpath)
             fprintf_param_value(" 19=%d", dynamic_weight)
 
             fwrite_weight_tag_data(op->weight_data, bp);
-            fwrite_weight_data(op->bias_data, bp);
+            if (op->bias_term)
+                fwrite_weight_data(op->bias_data, bp);
 
 #if NCNN_INT8
             // write int8_scale data
@@ -897,7 +989,8 @@ int ModelWriter::save(const char* parampath, const char* binpath)
             {
                 fwrite_weight_data(op->weight_data_int8_scales, bp, 90, 100);
                 fwrite_weight_data(op->bottom_blob_int8_scales, bp, 0.001, 1);
-                fwrite_weight_data(op->top_blob_int8_scales, bp, 0.001, 1);
+                if (op->int8_scale_term > 100)
+                    fwrite_weight_data(op->top_blob_int8_scales, bp, 0.001, 1);
             }
 #endif // NCNN_INT8
 
@@ -933,7 +1026,8 @@ int ModelWriter::save(const char* parampath, const char* binpath)
             }
 
             fwrite_weight_tag_data(op->weight_data, bp);
-            fwrite_weight_data(op->bias_data, bp);
+            if (op->bias_term)
+                fwrite_weight_data(op->bias_data, bp);
 
             if (shape_ready)
             {
@@ -1041,7 +1135,8 @@ int ModelWriter::save(const char* parampath, const char* binpath)
             fprintf_param_value(" 19=%d", dynamic_weight)
 
             fwrite_weight_tag_data(op->weight_data, bp);
-            fwrite_weight_data(op->bias_data, bp);
+            if (op->bias_term)
+                fwrite_weight_data(op->bias_data, bp);
 
 #if NCNN_INT8
             // write int8_scale data
@@ -1063,7 +1158,8 @@ int ModelWriter::save(const char* parampath, const char* binpath)
             {
                 fwrite_weight_data(op->weight_data_int8_scales, bp, 90, 100);
                 fwrite_weight_data(op->bottom_blob_int8_scales, bp, 0.001, 1);
-                fwrite_weight_data(op->top_blob_int8_scales, bp, 0.001, 1);
+                if (op->int8_scale_term > 100)
+                    fwrite_weight_data(op->top_blob_int8_scales, bp, 0.001, 1);
             }
 #endif // NCNN_INT8
 
@@ -1100,7 +1196,8 @@ int ModelWriter::save(const char* parampath, const char* binpath)
             }
 
             fwrite_weight_tag_data(op->weight_data, bp);
-            fwrite_weight_data(op->bias_data, bp);
+            if (op->bias_term)
+                fwrite_weight_data(op->bias_data, bp);
 
             if (shape_ready)
             {
